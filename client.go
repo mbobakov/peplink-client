@@ -10,14 +10,6 @@ import (
 	"github.com/go-resty/resty/v2"
 )
 
-// Options for the Peplink Client
-type Options struct {
-	URL          string        `long:"url" env:"URL" default:"https://api.ic.peplink.com" description:"URL of the Peplink InControl API" required:"true"`
-	Timeout      time.Duration `long:"timeout" env:"TIMEOUT" default:"5s" description:"Timeout for HTTP requests" required:"true"`
-	ClientID     string        `long:"client-id" env:"CLIENT_ID" default:"" description:"InControl 2 OAuth client_id" required:"true"`
-	ClientSecret string        `long:"client-secret" env:"CLIENT_SECRET" default:"" description:"InControl 2 OAuth client_secret" required:"true"`
-}
-
 // Client for the https://www.peplink.com/ic2-api-doc
 type Client struct {
 	httpClient *resty.Client
@@ -26,19 +18,30 @@ type Client struct {
 
 // NewClient creates a new Peplink Client and authenticates against the API
 // Runs token update process in the background
-func NewClient(ctx context.Context, opts Options) (*Client, error) {
+func NewClient(ctx context.Context, opts ...Option) (*Client, error) {
+	options := &options{
+		timeout:           10 * time.Second,
+		httpBasicEndpoint: "http://127.0.0.1:8080",
+		snmpAddress:       "127.0.0.1:161",
+		snmpCommunity:     "public",
+	}
+
+	for _, o := range opts {
+		o(options)
+	}
+
 	rest := resty.New().
-		SetBaseURL(opts.URL).
+		SetBaseURL(options.httpBasicEndpoint).
 		SetHeader("Content-Type", "application/json").
 		SetHeader("Accept", "application/json").
-		SetTimeout(opts.Timeout)
+		SetTimeout(options.timeout)
 
 	c := &Client{
 		httpClient: rest,
 		log:        slog.Default(),
 	}
 
-	ttl, err := c.authenticate(context.Background(), opts.ClientID, opts.ClientSecret)
+	ttl, err := c.authenticate(context.Background(), options.httpClientID, options.httpClientSecret)
 	if err != nil {
 		c.log.Error("Failed to authenticate", "error", err)
 
@@ -47,7 +50,7 @@ func NewClient(ctx context.Context, opts Options) (*Client, error) {
 
 	go func() {
 		time.Sleep(ttl - 10*time.Minute)
-		err := c.watchToken(ctx, opts.ClientID, opts.ClientSecret)
+		err := c.watchToken(ctx, options.httpClientID, options.httpClientSecret)
 		if err != nil {
 			c.log.Error("Failed to watch token", "error", err)
 		}
@@ -57,8 +60,8 @@ func NewClient(ctx context.Context, opts Options) (*Client, error) {
 }
 
 func (c *Client) watchToken(ctx context.Context, clientID, clientSecret string) error {
-	c.log.Info("AWS token refresh goroutine started")
-	defer c.log.Info("AWS token refresh goroutine stopped")
+	c.log.Info("Peplink token refresh goroutine started")
+	defer c.log.Info("Peplink token refresh goroutine stopped")
 
 	ttl, err := c.authenticate(ctx, clientID, clientSecret)
 	if err != nil {

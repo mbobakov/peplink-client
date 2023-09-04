@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -50,12 +49,11 @@ func TestClient_authenticate(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 
-			c, err := NewClient(ctx, Options{
-				URL:          srv.URL,
-				Timeout:      5 * time.Second,
-				ClientID:     tt.clientID,
-				ClientSecret: tt.clientSecret,
-			})
+			c, err := NewClient(ctx,
+				WithHTTPBasicClientID(tt.clientID),
+				WithHTTPBasicClientSecret(tt.clientSecret),
+				WithHTTPBasicURL(srv.URL),
+			)
 			require.Equal(t, tt.wantErr, err != nil, "authenticate() error = %v, wantErr %v", err, tt.wantErr)
 
 			if tt.wantToken {

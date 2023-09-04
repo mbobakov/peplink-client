@@ -118,21 +118,33 @@ type ModemObj struct {
 
 // GobiObj represents Gobi network information.
 type GobiObj struct {
-	RoamingStatus RoamingObj   `json:"roamingStatus"`       // Roaming status information
-	Network       string       `json:"network"`             // Network name (deprecated in fw8.0.1)
-	MobileType    string       `json:"mobileType"`          // Network name (use "mobileType" in fw8.0.1 or later)
-	SIM           SIMGroupObj  `json:"sim"`                 // SIM information
-	RemoteSIM     RemoteSIMObj `json:"remoteSim,omitempty"` // Remote SIM information (only when remote SIM is enabled)
-	Carrier       CarrierObj   `json:"carrier"`             // Carrier information
-	SignalLevel   int          `json:"signalLevel"`         // Signal Level [0,5]
-	MEID          MEIDObj      `json:"meid,omitempty"`      // Hex and Dec value of Mobile Equipment Identifier (MEID)
-	IMEI          string       `json:"imei,omitempty"`      // International Mobile Equipment Identity (IMEI)
-	ESN           string       `json:"esn,omitempty"`       // Electronic Serial Number (ESN)
-	Mode          string       `json:"mode,omitempty"`      // Gobi network mode
-	Band          []BandObj    `json:"band"`                // Gobi band information
-	MCC           string       `json:"mcc,omitempty"`       // Mobile Country Code (MCC)
-	MNC           string       `json:"mnc,omitempty"`       // Mobile Network Code (MNC)
-	CellTower     CellTowerObj `json:"cellTower"`           // Cell Tower information
+	RoamingStatus RoamingObj    `json:"roamingStatus"` // Roaming status information
+	Network       string        `json:"network"`       // Network name (deprecated in fw8.0.1)
+	MobileType    string        `json:"mobileType"`    // Network name (use "mobileType" in fw8.0.1 or later)
+	ModulePowerOn bool          `json:"modulePowerOn"` // TODO: doc
+	SIM           []SIMGroupObj `json:"-"`
+	// SIM information. Extracted not from JSON because contains order field
+	RemoteSIM               RemoteSIMObj            `json:"remoteSim,omitempty"`     // Remote SIM information (only when remote SIM is enabled)
+	SpeedFusionConnect5gLTE SpeedFusionConnect5gLTE `json:"speedfusionConnect5gLte"` // TODO: doc
+	Carrier                 CarrierObj              `json:"carrier"`                 // Carrier information
+	CarrierAggregation      bool                    `json:"carrierAggregation"`      // TODO: doc
+	SignalLevel             int                     `json:"signalLevel"`             // Signal Level [0,5]
+	RAT                     []RatObj                `json:"rat"`                     // Radio Access Technology (RAT) information
+	IMEI                    string                  `json:"imei"`                    // International Mobile Equipment Identity (IMEI)
+	MEID                    MEIDObj                 `json:"meid"`                    // Hex and Dec value of Mobile Equipment Identifier (MEID)
+	ESN                     string                  `json:"esn"`                     // Electronic Serial Number (ESN)
+	DataTechnology          string                  `json:"dataTechnology"`          // Data Technology
+	MCC                     string                  `json:"mcc"`                     // Mobile Country Code (MCC)
+	MNC                     string                  `json:"mnc"`                     // Mobile Network Code (MNC)
+	CellTower               CellTowerObj            `json:"cellTower"`               // Cell Tower information
+	Model                   string                  `json:"model"`
+	Firmware                string                  `json:"firmware"`
+}
+
+// RatObj represents Radio Access Technology (RAT) information.
+type RatObj struct {
+	Name string    `json:"name"` // RAT Name
+	Band []BandObj `json:"band"` // Band information
 }
 
 // BandObj represents cellular band information.
@@ -154,7 +166,17 @@ type SignalObj struct {
 
 // SIMGroupObj represents a group of SIM cards.
 type SIMGroupObj struct {
-	Order []int `json:"order"` // List of SIM IDs
+	Active                    bool                         `json:"active"`
+	SimCardDetected           bool                         `json:"simCardDetected"`
+	Imsi                      string                       `json:"imsi"`
+	Iccid                     string                       `json:"iccid"`
+	AutoApn                   bool                         `json:"autoApn"`
+	Apn                       string                       `json:"apn"`
+	BandwidthAllowanceMonitor BandwidthAllowanceMonitorObj `json:"bandwidthAllowanceMonitor"`
+}
+type BandwidthAllowanceMonitorObj struct {
+	Enable  bool `json:"enable"`
+	HasSMTP bool `json:"hasSmtp"`
 }
 
 // RemoteSIMObj represents remote SIM information.
@@ -200,7 +222,16 @@ type RoamingObj struct {
 
 // CellTowerObj represents cell tower information.
 type CellTowerObj struct {
-	CellID int `json:"cellId"`
+	CellID      int `json:"cellId"`
+	CellPlmn    int `json:"cellPlmn"`
+	CellUtranID int `json:"cellUtranId"`
+	Tac         int `json:"tac"`
+}
+
+// TODO: doc
+type SpeedFusionConnect5gLTE struct {
+	Active bool   `json:"active"`
+	Iccid  string `json:"iccid"`
 }
 
 // StatusWanConnection returns the status of the WAN connections
@@ -241,6 +272,34 @@ func (c *Client) StatusWanConnection(ctx context.Context) ([]WanStatus, error) {
 		err = json.Unmarshal(buf, &wan)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get wan status from json: %w", err)
+		}
+		// Get Sim info
+		simI, err := jmespath.Search("cellular.sim.order", wanI)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get sim wan status from json: %w", err)
+		}
+		if simI != nil {
+			for _, si := range simI.([]interface{}) {
+				s, ok := si.(float64)
+				if !ok {
+					return nil, fmt.Errorf("failed to get wan status: order is not a float64")
+				}
+				simI, err := jmespath.Search(fmt.Sprintf("cellular.sim.\"%d\"", int(s)), wanI)
+				if err != nil {
+					return nil, fmt.Errorf("failed to get sim wan status from json: %w", err)
+				}
+				// Do marshal/unmarshal to workaround interface{} hussle
+				buf, err := json.Marshal(simI)
+				if err != nil {
+					return nil, fmt.Errorf("failed to get wan status from json: %w", err)
+				}
+				sim := SIMGroupObj{}
+				err = json.Unmarshal(buf, &sim)
+				if err != nil {
+					return nil, fmt.Errorf("failed to get wan status from json: %w", err)
+				}
+				wan.Cellular.SIM = append(wan.Cellular.SIM, sim)
+			}
 		}
 		statuses = append(statuses, wan)
 	}
